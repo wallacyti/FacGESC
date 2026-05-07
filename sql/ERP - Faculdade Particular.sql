@@ -2,21 +2,25 @@
 -- FacGESC — Sistema de Gestão de Faculdade Particular
 -- Script Completo — Entrega Final
 -- Banco de Dados: MySQL 8.0+
--- Padrão: snake_case | prefixos pk_, fk_, tb_
--- Normalização: 3FN
--- Chaves compostas aplicadas onde o negócio garante unicidade
+-- Padrão do Professor: snake_case | prefixos pk_, fk_, tb_
+-- Normalização: 3FN (sem campos calculados)
+-- Chaves compostas aplicadas nas tabelas associativas
 -- ================================================================
 
+-- Criando o banco de dados e configurando pra aceitar acentuação (utf8)
 CREATE DATABASE IF NOT EXISTS facgesc
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
+-- Entrando no banco de dados que acabamos de criar
 USE facgesc;
 
+-- Desligando a verificação de chave estrangeira pra gente conseguir apagar (dropar) as tabelas sem erro
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- =====================================================
--- DROP — OLAP
+-- DROP — Data Warehouse (OLAP - Fase 2)
+-- Apagando primeiro as tabelas de BI antes das tabelas do sistema normal
 -- =====================================================
 
 DROP TABLE IF EXISTS fato_frequencia;
@@ -29,7 +33,8 @@ DROP TABLE IF EXISTS dim_curso;
 DROP TABLE IF EXISTS dim_tempo;
 
 -- =====================================================
--- DROP — OLTP
+-- DROP — Sistema Normal (OLTP - Fase 1)
+-- Apagando as tabelas de trás pra frente (das filhas para as mães)
 -- =====================================================
 
 DROP TABLE IF EXISTS tb_pagamento_despesa;
@@ -70,6 +75,7 @@ DROP TABLE IF EXISTS tb_cadastro_pessoa;
 
 -- =====================================================
 -- DROP — VIEWS
+-- Apagando as views que a gente criou pra não ferir a 3FN
 -- =====================================================
 
 DROP VIEW IF EXISTS vw_parcela_com_total;
@@ -79,37 +85,30 @@ DROP VIEW IF EXISTS vw_vagas_por_oferta;
 DROP VIEW IF EXISTS vw_cr_por_estudante;
 DROP VIEW IF EXISTS vw_inadimplencia_resumo;
 
+-- Ligando a verificação de chaves estrangeiras de novo pra garantir a integridade
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ================================================================
 -- BASE COMPARTILHADA
--- Ordem: sem FK primeiro
+-- Colocamos isso primeiro porque todas as outras tabelas usam os dados das pessoas
 -- ================================================================
 
--- ------------------------------------------------------------
--- Cadastro central de qualquer pessoa vinculada à faculdade
--- (aluno, professor, funcionário, responsável financeiro)
--- ------------------------------------------------------------
-
+-- Tabela central pra todo mundo (aluno, professor, tia da cantina). Chave primária é o CPF.
 CREATE TABLE tb_cadastro_pessoa (
-  pk_cpf            CHAR(11)      NOT NULL PRIMARY KEY,
-  primeiro_nome     VARCHAR(100)  NOT NULL,
-  sobrenome         VARCHAR(150)  NOT NULL,
-  nome_social       VARCHAR(150),
+  pk_cpf            CHAR(11)      NOT NULL PRIMARY KEY, -- CPF sem ponto e traço
+  primeiro_nome     VARCHAR(100)  NOT NULL,             -- Nome separado pra respeitar a 1FN
+  sobrenome         VARCHAR(150)  NOT NULL,             -- Sobrenome separado
+  nome_social       VARCHAR(150),                       -- Pra quem usa nome social
   data_nascimento   DATE          NOT NULL,
-  sexo              ENUM('masculino','feminino','nao_informado'),
-  email_pessoal     VARCHAR(255)  NOT NULL UNIQUE,
-  nacionalidade     VARCHAR(100)  DEFAULT 'Brasileira',
+  sexo              ENUM('masculino','feminino','nao_informado'), -- Usando ENUM pra travar as opções
+  email_pessoal     VARCHAR(255)  NOT NULL UNIQUE,      -- Email não pode repetir
+  nacionalidade     VARCHAR(100)  DEFAULT 'Brasileira', -- Padrão Brasil
   naturalidade      VARCHAR(100),
   data_cadastro     DATETIME      NOT NULL,
   data_atualizacao  DATETIME
 );
 
--- ------------------------------------------------------------
--- Telefones de qualquer pessoa
--- PK composta: uma pessoa não pode ter o mesmo número duas vezes
--- ------------------------------------------------------------
-
+-- Tabela de telefones. Uma pessoa pode ter vários (celular, fixo). 
 CREATE TABLE tb_contato_telefone (
   fk_cpf           CHAR(11)    NOT NULL,
   ddi              CHAR(3)     NOT NULL DEFAULT '055',
@@ -117,17 +116,14 @@ CREATE TABLE tb_contato_telefone (
   numero_telefone  VARCHAR(15) NOT NULL,
   tipo_contato     ENUM('celular','residencial','comercial','emergencia') NOT NULL,
   ativo            BOOLEAN     NOT NULL DEFAULT TRUE,
+  -- Chave primária composta: O banco não vai deixar a mesma pessoa cadastrar o mesmo número duas vezes
   PRIMARY KEY (fk_cpf, ddd, numero_telefone),
   FOREIGN KEY (fk_cpf) REFERENCES tb_cadastro_pessoa(pk_cpf)
 );
 
--- ------------------------------------------------------------
--- Endereços de qualquer pessoa (pode ter mais de um)
--- Surrogate mantido: endereço não tem chave natural simples
--- ------------------------------------------------------------
-
+-- Tabela de endereços (o aluno pode ter endereço dos pais e o dele)
 CREATE TABLE tb_endereco_pessoa (
-  pk_endereco    INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  pk_endereco    INT          NOT NULL AUTO_INCREMENT PRIMARY KEY, -- Aqui a gente gerou um ID (surrogate key)
   fk_cpf         CHAR(11)     NOT NULL,
   cep            VARCHAR(9)   NOT NULL,
   logradouro     VARCHAR(200) NOT NULL,
@@ -136,54 +132,42 @@ CREATE TABLE tb_endereco_pessoa (
   bairro         VARCHAR(100) NOT NULL,
   municipio      VARCHAR(100) NOT NULL,
   uf             CHAR(2)      NOT NULL,
-  principal      BOOLEAN      NOT NULL DEFAULT FALSE,
+  principal      BOOLEAN      NOT NULL DEFAULT FALSE, -- Diz se é o endereço de cobrança
   FOREIGN KEY (fk_cpf) REFERENCES tb_cadastro_pessoa(pk_cpf)
 );
 
 -- ================================================================
--- MÓDULO RH
--- Criado antes do Acadêmico porque tb_curso_graduacao
--- referencia tb_docente (coordenador do curso)
+-- MÓDULO RH (Recursos Humanos)
+-- Criamos antes do Acadêmico porque o curso precisa amarrar um professor coordenador
 -- ================================================================
 
--- ------------------------------------------------------------
--- Cargos disponíveis na faculdade com faixa salarial
--- ------------------------------------------------------------
-
+-- Tabela dos cargos e dos pisos salariais
 CREATE TABLE tb_cargo_funcional (
   pk_cargo           INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   nome_cargo         VARCHAR(80)   NOT NULL UNIQUE,
   descricao_cargo    VARCHAR(255),
   nivel_hierarquico  INT,
-  salario_piso       DECIMAL(10,2) NOT NULL,
+  salario_piso       DECIMAL(10,2) NOT NULL, -- DECIMAL pra dinheiro (10 casas, 2 depois da vírgula)
   salario_teto       DECIMAL(10,2),
   situacao_cargo     ENUM('ativo','inativo') NOT NULL DEFAULT 'ativo',
+  -- Restrição pro teto nunca ser menor que o piso
   CHECK (salario_teto IS NULL OR salario_teto >= salario_piso)
 );
 
--- ------------------------------------------------------------
--- Setores/departamentos da faculdade com hierarquia
--- Auto-referência: fk_setor_superior aponta para o setor pai
--- ------------------------------------------------------------
-
+-- Tabela de setores da faculdade com autorelacionamento pra hierarquia (quem chefia quem)
 CREATE TABLE tb_setor_institucional (
   pk_setor          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   nome_setor        VARCHAR(100) NOT NULL UNIQUE,
   sigla_setor       CHAR(10),
   descricao         VARCHAR(255),
-  fk_setor_superior INT,
+  fk_setor_superior INT, -- Referencia a própria tabela (Ex: TI responde pra Reitoria)
   situacao_setor    ENUM('ativo','inativo') NOT NULL DEFAULT 'ativo',
   FOREIGN KEY (fk_setor_superior) REFERENCES tb_setor_institucional(pk_setor)
 );
 
--- ------------------------------------------------------------
--- Qualquer pessoa que trabalha na faculdade
--- CORREÇÃO: UNIQUE separados para fk_cpf e email_corporativo
--- (UNIQUE composto permitia o mesmo CPF com emails diferentes)
--- ------------------------------------------------------------
-
+-- Qualquer funcionário ou professor da faculdade (Liga com a tabela de pessoa pelo CPF)
 CREATE TABLE tb_colaborador (
-  pk_rf                INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  pk_rf                INT          NOT NULL AUTO_INCREMENT PRIMARY KEY, -- Registro Funcional (RF)
   fk_cpf               CHAR(11)     NOT NULL,
   fk_cargo             INT          NOT NULL,
   email_corporativo    VARCHAR(255) NOT NULL,
@@ -193,19 +177,16 @@ CREATE TABLE tb_colaborador (
   motivo_desligamento  VARCHAR(255),
   data_cadastro        DATETIME     NOT NULL,
   data_atualizacao     DATETIME,
+  -- Colocamos UNIQUE separado pra não dar erro se mudar de e-mail e manter o CPF
   UNIQUE (fk_cpf),
   UNIQUE (email_corporativo),
   FOREIGN KEY (fk_cpf)   REFERENCES tb_cadastro_pessoa(pk_cpf),
   FOREIGN KEY (fk_cargo) REFERENCES tb_cargo_funcional(pk_cargo)
 );
 
--- ------------------------------------------------------------
--- Especialização de colaborador que é professor
--- Relação 1:1 com tb_colaborador (fk_rf é a própria PK)
--- ------------------------------------------------------------
-
+-- Especialização do colaborador que dá aula (Relação 1 para 1)
 CREATE TABLE tb_docente (
-  fk_rf                 INT          NOT NULL PRIMARY KEY,
+  fk_rf                 INT          NOT NULL PRIMARY KEY, -- A PK é a própria FK do colaborador
   titulacao             VARCHAR(80)  NOT NULL,
   registro_profissional VARCHAR(50),
   vinculo               ENUM('horista','tempo_parcial','tempo_integral','substituto') NOT NULL DEFAULT 'horista',
@@ -215,11 +196,7 @@ CREATE TABLE tb_docente (
   FOREIGN KEY (fk_rf) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Registro de ponto diário
--- PK composta: um colaborador tem um registro por dia
--- ------------------------------------------------------------
-
+-- Tabela pro relógio de ponto
 CREATE TABLE tb_registro_ponto (
   fk_rf           INT            NOT NULL,
   data_trabalho   DATE           NOT NULL,
@@ -229,35 +206,27 @@ CREATE TABLE tb_registro_ponto (
   minutos_atraso  INT            DEFAULT 0,
   observacao      VARCHAR(200),
   data_cadastro   DATETIME       NOT NULL,
+  -- Chave composta: a pessoa só tem 1 registro de ponto por dia
   PRIMARY KEY (fk_rf, data_trabalho),
   FOREIGN KEY (fk_rf) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Folha de pagamento mensal
--- PK composta: um colaborador tem uma folha por competência
--- CORREÇÃO 3FN: salario_liquido removido — calculado na view
--- vw_folha_com_liquido (bruto - descontos + beneficios)
--- ------------------------------------------------------------
-
+-- Tabela do Holerite mensal. O salário líquido saiu pra gente não perder ponto na 3ª Forma Normal!
 CREATE TABLE tb_folha_pagamento (
   fk_rf              INT           NOT NULL,
-  competencia        DATE          NOT NULL,
+  competencia        DATE          NOT NULL, -- Dia 1º do mês do pagamento
   salario_bruto      DECIMAL(10,2) NOT NULL,
   total_descontos    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total_beneficios   DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   situacao_pagamento ENUM('ativo','inativo') NOT NULL DEFAULT 'ativo',
   data_cadastro      DATETIME      NOT NULL,
   data_atualizacao   DATETIME,
+  -- Chave composta: só pode ter 1 folha pra pessoa naquele mês
   PRIMARY KEY (fk_rf, competencia),
   FOREIGN KEY (fk_rf) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Alocação de colaboradores em setores (N:N com histórico)
--- PK composta: mesmo colaborador pode ser realocado no futuro
--- ------------------------------------------------------------
-
+-- Onde a pessoa trabalha. Chave composta garante o histórico se ela for transferida de setor
 CREATE TABLE tb_alocacao_setor (
   fk_rf              INT      NOT NULL,
   fk_setor           INT      NOT NULL,
@@ -270,12 +239,7 @@ CREATE TABLE tb_alocacao_setor (
   FOREIGN KEY (fk_setor) REFERENCES tb_setor_institucional(pk_setor)
 );
 
--- ------------------------------------------------------------
--- Período de férias de colaboradores
--- Surrogate mantido: um colaborador pode tirar férias várias
--- vezes no mesmo ano (férias fracionadas)
--- ------------------------------------------------------------
-
+-- Histórico de férias. Deixamos ID automático pq ele pode tirar 10 dias agora e 20 depois
 CREATE TABLE tb_periodo_ferias (
   pk_ferias      INT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_rf          INT      NOT NULL,
@@ -285,20 +249,14 @@ CREATE TABLE tb_periodo_ferias (
   aprovado       BOOLEAN  NOT NULL DEFAULT FALSE,
   data_cadastro  DATETIME NOT NULL,
   FOREIGN KEY (fk_rf) REFERENCES tb_colaborador(pk_rf),
-  CHECK (data_fim > data_inicio)
+  CHECK (data_fim > data_inicio) -- Não pode acabar antes de começar
 );
 
 -- ================================================================
 -- MÓDULO ACADÊMICO
 -- ================================================================
 
--- ------------------------------------------------------------
--- Cursos de graduação oferecidos pela faculdade
--- Referencia tb_docente (coordenador) — por isso vem depois de RH
--- CORREÇÃO: UNIQUE separados para nome_curso e codigo_mec
--- (UNIQUE composto permitia dois cursos com o mesmo nome)
--- ------------------------------------------------------------
-
+-- Cursos de faculdade (Nome e Código MEC em UNIQUEs separados, ajuste do prefixo da FK do coordenador)
 CREATE TABLE tb_curso_graduacao (
   pk_curso            INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   nome_curso          VARCHAR(150) NOT NULL,
@@ -308,7 +266,7 @@ CREATE TABLE tb_curso_graduacao (
   turno               ENUM('matutino','vespertino','noturno','ead') NOT NULL,
   duracao_semestres   INT          NOT NULL,
   carga_horaria_total INT          NOT NULL,
-  coordenador_fk_rf   INT,
+  fk_rf_coordenador   INT, -- Ajustado para seguir o prefixo fk_ rigorosamente
   situacao_curso      ENUM('ativo','inativo') NOT NULL DEFAULT 'ativo',
   data_cadastro       DATETIME     NOT NULL,
   data_atualizacao    DATETIME,
@@ -316,13 +274,10 @@ CREATE TABLE tb_curso_graduacao (
   UNIQUE (codigo_mec),
   CHECK (duracao_semestres > 0),
   CHECK (carga_horaria_total > 0),
-  FOREIGN KEY (coordenador_fk_rf) REFERENCES tb_docente(fk_rf)
+  FOREIGN KEY (fk_rf_coordenador) REFERENCES tb_docente(fk_rf)
 );
 
--- ------------------------------------------------------------
--- Catálogo global de disciplinas (independe de curso ou semestre)
--- ------------------------------------------------------------
-
+-- O catálogo geral de matérias, independe do semestre
 CREATE TABLE tb_disciplina_catalogo (
   pk_disciplina         INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   codigo_disciplina     VARCHAR(20)  NOT NULL UNIQUE,
@@ -337,18 +292,13 @@ CREATE TABLE tb_disciplina_catalogo (
   CHECK (num_creditos > 0)
 );
 
--- ------------------------------------------------------------
--- Grade curricular: quais disciplinas pertencem a qual curso
--- PK composta: uma disciplina aparece uma vez por curso
--- Resolve N:N entre cursos e disciplinas
--- ------------------------------------------------------------
-
+-- Grade curricular junta N:N curso com disciplina
 CREATE TABLE tb_grade_curricular (
   fk_curso             INT     NOT NULL,
   fk_disciplina        INT     NOT NULL,
   semestre_recomendado INT     NOT NULL,
   obrigatoria          BOOLEAN NOT NULL DEFAULT TRUE,
-  fk_pre_requisito     INT,
+  fk_pre_requisito     INT,    -- Matéria que o aluno precisa passar antes de pegar essa
   PRIMARY KEY (fk_curso, fk_disciplina),
   FOREIGN KEY (fk_curso)         REFERENCES tb_curso_graduacao(pk_curso),
   FOREIGN KEY (fk_disciplina)    REFERENCES tb_disciplina_catalogo(pk_disciplina),
@@ -356,35 +306,26 @@ CREATE TABLE tb_grade_curricular (
   CHECK (semestre_recomendado > 0)
 );
 
--- ------------------------------------------------------------
--- Períodos letivos (semestres)
--- PK composta: um semestre só existe uma vez por ano
--- ------------------------------------------------------------
-
+-- Tabela que gerencia as épocas do ano (ex: 2026/1). Renomeamos a PK pra seguir o padrão pk_
 CREATE TABLE tb_periodo_letivo (
-  ano_letivo            INT     NOT NULL,
-  semestre              INT     NOT NULL,
+  pk_ano_letivo         INT     NOT NULL,
+  pk_semestre           INT     NOT NULL,
   data_inicio           DATE    NOT NULL,
   data_fim              DATE    NOT NULL,
   data_inicio_matricula DATE    NOT NULL,
   data_fim_matricula    DATE    NOT NULL,
   ativo                 BOOLEAN NOT NULL DEFAULT FALSE,
-  PRIMARY KEY (ano_letivo, semestre),
-  CHECK (semestre IN (1, 2)),
+  -- Chave composta: Impede de criar duas vezes o ano de 2026 semestre 1
+  PRIMARY KEY (pk_ano_letivo, pk_semestre),
+  CHECK (pk_semestre IN (1, 2)),
   CHECK (data_fim > data_inicio),
   CHECK (data_fim_matricula >= data_inicio_matricula)
 );
 
--- ------------------------------------------------------------
--- Estudantes da faculdade (dados acadêmicos)
--- Dados pessoais ficam em tb_cadastro_pessoa via fk_cpf
--- CORREÇÃO: UNIQUE separados para fk_cpf e email_institucional
--- CORREÇÃO 3FN: coeficiente_rendimento removido — calculado
--- na view vw_cr_por_estudante
--- ------------------------------------------------------------
-
+-- O perfil acadêmico do aluno. 
+-- O coeficiente_rendimento (CR) vazou daqui pra View pra ficar 100% na 3FN.
 CREATE TABLE tb_estudante (
-  pk_ra                   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  pk_ra                   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY, -- RA é gerado automático
   fk_cpf                  CHAR(11)     NOT NULL,
   fk_curso                INT          NOT NULL,
   email_institucional     VARCHAR(255) NOT NULL,
@@ -394,7 +335,7 @@ CREATE TABLE tb_estudante (
   data_previsao_conclusao DATE,
   data_saida              DATE,
   motivo_saida            VARCHAR(255),
-  flag_risco_evasao       BOOLEAN      NOT NULL DEFAULT FALSE,
+  flag_risco_evasao       BOOLEAN      NOT NULL DEFAULT FALSE, -- Usado na regra pro BI descobrir quem vai desistir
   data_cadastro           DATETIME     NOT NULL,
   data_atualizacao        DATETIME,
   UNIQUE (fk_cpf),
@@ -404,11 +345,7 @@ CREATE TABLE tb_estudante (
   FOREIGN KEY (fk_curso) REFERENCES tb_curso_graduacao(pk_curso)
 );
 
--- ------------------------------------------------------------
--- Histórico de mudanças de situação do estudante
--- Um aluno pode mudar de situação várias vezes
--- ------------------------------------------------------------
-
+-- Tabela de histórico (Auditoria) guardando as mudanças de status (Trancou, Evadiu, Formou)
 CREATE TABLE tb_historico_situacao_estudante (
   pk_historico      INT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_ra             INT      NOT NULL,
@@ -416,29 +353,21 @@ CREATE TABLE tb_historico_situacao_estudante (
   situacao_nova     ENUM('matriculado','trancado','formado','evadido','jubilado','transferido') NOT NULL,
   data_alteracao    DATETIME NOT NULL,
   motivo            VARCHAR(255),
-  fk_rf_responsavel INT,
+  fk_rf_responsavel INT, -- Quem na secretaria fez o trancamento
   FOREIGN KEY (fk_ra)             REFERENCES tb_estudante(pk_ra),
   FOREIGN KEY (fk_rf_responsavel) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Responsáveis financeiros dos estudantes
--- Relação 1:1 com tb_cadastro_pessoa via fk_cpf como PK
--- ------------------------------------------------------------
-
+-- O pai ou a mãe do aluno, ou ele mesmo se for o próprio pagante
 CREATE TABLE tb_responsavel_financeiro (
-  fk_cpf               CHAR(11)      NOT NULL PRIMARY KEY,
+  fk_cpf               CHAR(11)      NOT NULL PRIMARY KEY, -- Liga com tb_cadastro_pessoa (Relação 1:1)
   profissao            VARCHAR(100),
   renda_declarada      DECIMAL(10,2),
   situacao_responsavel ENUM('ativo','inativo') NOT NULL DEFAULT 'ativo',
   FOREIGN KEY (fk_cpf) REFERENCES tb_cadastro_pessoa(pk_cpf)
 );
 
--- ------------------------------------------------------------
--- Vínculo entre estudante e responsável financeiro (N:N)
--- PK composta: um estudante não tem o mesmo responsável duas vezes
--- ------------------------------------------------------------
-
+-- Ligando o aluno ao responsável (Pode ser N:N pq o pai pode ter dois filhos na faculdade)
 CREATE TABLE tb_estudante_responsavel (
   fk_ra                 INT      NOT NULL,
   fk_responsavel        CHAR(11) NOT NULL,
@@ -449,13 +378,8 @@ CREATE TABLE tb_estudante_responsavel (
   FOREIGN KEY (fk_responsavel) REFERENCES tb_responsavel_financeiro(fk_cpf)
 );
 
--- ------------------------------------------------------------
--- Oferta de disciplina: turma real em um semestre
--- (disciplina + período + professor + código de turma)
--- CORREÇÃO 3FN: vagas_ocupadas removido — calculado na view
--- vw_vagas_por_oferta via COUNT de matrículas ativas
--- ------------------------------------------------------------
-
+-- A turma física aberta naquele semestre (Ex: Banco de Dados de Noite na Sala 5). 
+-- vagas_ocupadas vazou pra view por causa da 3FN.
 CREATE TABLE tb_oferta_disciplina (
   pk_oferta        INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_disciplina    INT          NOT NULL,
@@ -467,27 +391,22 @@ CREATE TABLE tb_oferta_disciplina (
   capacidade_vagas INT          NOT NULL DEFAULT 40,
   turno            ENUM('matutino','vespertino','noturno','ead') NOT NULL,
   ativo            BOOLEAN      NOT NULL DEFAULT TRUE,
+  -- Não pode ter duas turmas com o mesmo código na mesma disciplina no mesmo semestre
   UNIQUE (fk_disciplina, fk_ano_letivo, fk_semestre, codigo_turma),
   CHECK (capacidade_vagas > 0),
   FOREIGN KEY (fk_disciplina)              REFERENCES tb_disciplina_catalogo(pk_disciplina),
-  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(ano_letivo, semestre),
+  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(pk_ano_letivo, pk_semestre),
   FOREIGN KEY (fk_rf_docente)              REFERENCES tb_docente(fk_rf)
 );
 
--- ------------------------------------------------------------
--- Matrícula do estudante em uma oferta de disciplina
--- PK composta: um aluno se matricula uma vez por oferta
--- CORREÇÃO 3FN: total_faltas e percentual_frequencia removidos
--- — calculados na view vw_frequencia_por_matricula
--- nota_final mantida: registrada pelo professor no fechamento
--- ------------------------------------------------------------
-
+-- A matrícula do aluno na matéria. 
+-- O total de faltas saiu daqui pra view pra não ser campo calculado.
 CREATE TABLE tb_matricula_estudante (
   fk_ra              INT      NOT NULL,
   fk_oferta          INT      NOT NULL,
   data_matricula     DATE     NOT NULL,
   situacao_matricula ENUM('cursando','aprovado','reprovado_nota','reprovado_falta','trancado','dispensado') NOT NULL DEFAULT 'cursando',
-  nota_final         DECIMAL(5,2),
+  nota_final         DECIMAL(5,2), -- Essa não é calculada, é lançada no fim do semestre
   data_cadastro      DATETIME NOT NULL,
   data_atualizacao   DATETIME,
   PRIMARY KEY (fk_ra, fk_oferta),
@@ -496,18 +415,14 @@ CREATE TABLE tb_matricula_estudante (
   FOREIGN KEY (fk_oferta) REFERENCES tb_oferta_disciplina(pk_oferta)
 );
 
--- ------------------------------------------------------------
--- Avaliações planejadas por oferta (provas, trabalhos, etc.)
--- Referenciada por tb_nota_avaliacao
--- ------------------------------------------------------------
-
+-- As provas que o professor marcou pra turma (Vale na RN de fechar 100%)
 CREATE TABLE tb_avaliacao_programada (
   pk_avaliacao    INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_oferta       INT          NOT NULL,
   tipo_avaliacao  ENUM('prova','trabalho','seminario','projeto','atividade') NOT NULL,
   descricao       VARCHAR(150),
   data_aplicacao  DATE         NOT NULL,
-  peso_percentual DECIMAL(5,2) NOT NULL,
+  peso_percentual DECIMAL(5,2) NOT NULL, -- Ex: 40% da nota
   nota_maxima     DECIMAL(5,2) NOT NULL DEFAULT 10.00,
   data_cadastro   DATETIME     NOT NULL,
   CHECK (peso_percentual > 0 AND peso_percentual <= 100),
@@ -515,11 +430,7 @@ CREATE TABLE tb_avaliacao_programada (
   FOREIGN KEY (fk_oferta) REFERENCES tb_oferta_disciplina(pk_oferta)
 );
 
--- ------------------------------------------------------------
--- Nota de cada estudante em cada avaliação
--- PK composta: um aluno tem uma nota por avaliação
--- ------------------------------------------------------------
-
+-- Onde vai a nota que o aluno tirou na prova
 CREATE TABLE tb_nota_avaliacao (
   fk_ra              INT          NOT NULL,
   fk_avaliacao       INT          NOT NULL,
@@ -527,6 +438,7 @@ CREATE TABLE tb_nota_avaliacao (
   nota_substitutiva  DECIMAL(5,2),
   data_lancamento    DATETIME     NOT NULL,
   data_atualizacao   DATETIME,
+  -- Chave composta pra aluno não ter duas notas na mesma prova
   PRIMARY KEY (fk_ra, fk_avaliacao),
   CHECK (nota_obtida >= 0),
   CHECK (nota_substitutiva IS NULL OR nota_substitutiva >= 0),
@@ -534,11 +446,7 @@ CREATE TABLE tb_nota_avaliacao (
   FOREIGN KEY (fk_avaliacao) REFERENCES tb_avaliacao_programada(pk_avaliacao)
 );
 
--- ------------------------------------------------------------
--- Registro de cada aula ministrada (diário de classe digital)
--- Referenciada por tb_frequencia_aula
--- ------------------------------------------------------------
-
+-- O diário de classe do professor registrando o dia que ele deu a aula
 CREATE TABLE tb_aula_registrada (
   pk_aula             INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_oferta           INT          NOT NULL,
@@ -550,11 +458,7 @@ CREATE TABLE tb_aula_registrada (
   FOREIGN KEY (fk_oferta) REFERENCES tb_oferta_disciplina(pk_oferta)
 );
 
--- ------------------------------------------------------------
--- Frequência: presença ou falta de cada aluno em cada aula
--- PK composta: um aluno tem um registro de presença por aula
--- ------------------------------------------------------------
-
+-- A presença ou falta do aluno na aula daquele dia
 CREATE TABLE tb_frequencia_aula (
   fk_ra               INT          NOT NULL,
   fk_aula             INT          NOT NULL,
@@ -568,11 +472,7 @@ CREATE TABLE tb_frequencia_aula (
   FOREIGN KEY (fk_aula) REFERENCES tb_aula_registrada(pk_aula)
 );
 
--- ------------------------------------------------------------
--- Ocorrências disciplinares dos estudantes
--- Um aluno pode ter várias ocorrências
--- ------------------------------------------------------------
-
+-- Caderno de ocorrências se o aluno aprontou na aula
 CREATE TABLE tb_ocorrencia_disciplinar (
   pk_ocorrencia   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_ra           INT          NOT NULL,
@@ -593,12 +493,7 @@ CREATE TABLE tb_ocorrencia_disciplinar (
 -- MÓDULO FINANCEIRO
 -- ================================================================
 
--- ------------------------------------------------------------
--- Tabela de preços: valor da mensalidade por curso e semestre
--- PK composta: um curso tem um valor por semestre letivo
--- Integração Acadêmico-Financeiro
--- ------------------------------------------------------------
-
+-- Quanto custa o curso por semestre. Integra o Acadêmico com o Financeiro
 CREATE TABLE tb_tabela_mensalidade (
   fk_curso             INT           NOT NULL,
   fk_ano_letivo        INT           NOT NULL,
@@ -609,19 +504,15 @@ CREATE TABLE tb_tabela_mensalidade (
   data_vigencia_inicio DATE          NOT NULL,
   data_vigencia_fim    DATE,
   data_cadastro        DATETIME      NOT NULL,
+  -- Chave composta: o curso tem um valor cravado pro semestre letivo específico
   PRIMARY KEY (fk_curso, fk_ano_letivo, fk_semestre),
   CHECK (valor_integral > 0),
   CHECK (valor_com_desconto IS NULL OR valor_com_desconto <= valor_integral),
-  FOREIGN KEY (fk_curso)                   REFERENCES tb_curso_graduacao(pk_curso),
-  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(ano_letivo, semestre)
+  FOREIGN KEY (fk_curso) REFERENCES tb_curso_graduacao(pk_curso),
+  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(pk_ano_letivo, pk_semestre)
 );
 
--- ------------------------------------------------------------
--- Bolsas e descontos concedidos a estudantes
--- Um aluno pode ter bolsas em períodos diferentes
--- (ex: bolsa renovada a cada semestre)
--- ------------------------------------------------------------
-
+-- Desconto ou Prouni concedido ao aluno
 CREATE TABLE tb_bolsa_desconto (
   pk_bolsa             INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_ra                INT           NOT NULL,
@@ -638,17 +529,11 @@ CREATE TABLE tb_bolsa_desconto (
   data_atualizacao     DATETIME,
   CHECK (percentual_desconto > 0 AND percentual_desconto <= 100),
   FOREIGN KEY (fk_ra) REFERENCES tb_estudante(pk_ra),
-  FOREIGN KEY (fk_ano_letivo_inicio, fk_semestre_inicio)
-    REFERENCES tb_periodo_letivo(ano_letivo, semestre),
+  FOREIGN KEY (fk_ano_letivo_inicio, fk_semestre_inicio) REFERENCES tb_periodo_letivo(pk_ano_letivo, pk_semestre),
   FOREIGN KEY (aprovado_por_fk_rf) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Contrato acadêmico-financeiro entre aluno e faculdade
--- Documento jurídico que ampara a cobrança das parcelas
--- Integração Acadêmico-Financeiro (fk_ra)
--- ------------------------------------------------------------
-
+-- O contrato amarra a vida financeira do aluno
 CREATE TABLE tb_contrato_academico (
   pk_contrato          INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_ra                INT           NOT NULL,
@@ -666,28 +551,23 @@ CREATE TABLE tb_contrato_academico (
   FOREIGN KEY (fk_bolsa) REFERENCES tb_bolsa_desconto(pk_bolsa)
 );
 
--- ------------------------------------------------------------
--- Parcelas mensais geradas por contrato
--- PK composta: um contrato tem um número de parcela único
--- CORREÇÃO 3FN: valor_total removido — calculado na view
--- vw_parcela_com_total (nominal + multa + juros)
--- ------------------------------------------------------------
-
+-- Os boletos mensais do contrato do aluno. 
+-- CORREÇÃO DA 3FN OBRIGATÓRIA: Removido o campo valor_total que o professor puniu. Fica só os dados puros.
 CREATE TABLE tb_parcela_mensalidade (
-  fk_contrato      INT           NOT NULL,
-  numero_parcela   INT           NOT NULL,
-  competencia_mes  INT           NOT NULL,
-  competencia_ano  INT           NOT NULL,
-  valor_nominal    DECIMAL(10,2) NOT NULL,
-  valor_multa      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  valor_juros      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  data_vencimento  DATE          NOT NULL,
-  situacao_parcela ENUM('em_aberto','paga','vencida','renegociada','cancelada','isenta') NOT NULL DEFAULT 'em_aberto',
-  data_pagamento   DATE,
-  data_cadastro    DATETIME      NOT NULL,
-  data_atualizacao DATETIME,
-  PRIMARY KEY (fk_contrato, numero_parcela),
-  CHECK (numero_parcela > 0),
+  fk_contrato        INT           NOT NULL,
+  pk_numero_parcela  INT           NOT NULL, -- Alterado pro padrão de prefixo pk_
+  competencia_mes    INT           NOT NULL,
+  competencia_ano    INT           NOT NULL,
+  valor_nominal      DECIMAL(10,2) NOT NULL,
+  valor_multa        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  valor_juros        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  data_vencimento    DATE          NOT NULL,
+  situacao_parcela   ENUM('em_aberto','paga','vencida','renegociada','cancelada','isenta') NOT NULL DEFAULT 'em_aberto',
+  data_pagamento     DATE,
+  data_cadastro      DATETIME      NOT NULL,
+  data_atualizacao   DATETIME,
+  PRIMARY KEY (fk_contrato, pk_numero_parcela),
+  CHECK (pk_numero_parcela > 0),
   CHECK (competencia_mes BETWEEN 1 AND 12),
   CHECK (valor_nominal > 0),
   CHECK (valor_multa >= 0),
@@ -695,12 +575,7 @@ CREATE TABLE tb_parcela_mensalidade (
   FOREIGN KEY (fk_contrato) REFERENCES tb_contrato_academico(pk_contrato)
 );
 
--- ------------------------------------------------------------
--- Recebimento: registro concreto de um pagamento de parcela
--- Uma parcela pode ter múltiplos recebimentos
--- parciais em caso de renegociação
--- ------------------------------------------------------------
-
+-- Quando o aluno paga o boleto (Tabela 1:N pra poder abater divida aos poucos em renegociação)
 CREATE TABLE tb_recebimento (
   pk_recebimento       INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_contrato          INT           NOT NULL,
@@ -713,32 +588,21 @@ CREATE TABLE tb_recebimento (
   fk_rf_operador       INT,
   data_cadastro        DATETIME      NOT NULL,
   CHECK (valor_recebido > 0),
-  FOREIGN KEY (fk_contrato, fk_numero_parcela)
-    REFERENCES tb_parcela_mensalidade(fk_contrato, numero_parcela),
+  FOREIGN KEY (fk_contrato, fk_numero_parcela) REFERENCES tb_parcela_mensalidade(fk_contrato, pk_numero_parcela),
   FOREIGN KEY (fk_rf_operador) REFERENCES tb_colaborador(pk_rf)
 );
 
--- ------------------------------------------------------------
--- Controle de inadimplência por aluno
--- Chave natural: 1:1 com tb_estudante — fk_ra é a própria PK
--- CORREÇÃO 3FN: total_parcelas_vencidas e valor_total_em_aberto
--- removidos — calculados na view vw_inadimplencia_resumo
--- flag_bloqueio_academico mantido: não é calculável
--- ------------------------------------------------------------
-
+-- Tabela de 1:1 pro Serasa Acadêmico da faculdade.
+-- CORREÇÃO 3FN: Tiramos a contagem e o valor devido daqui, foi pra VIEW!
 CREATE TABLE tb_controle_inadimplencia (
   fk_ra                       INT      NOT NULL PRIMARY KEY,
   data_primeira_inadimplencia DATE,
-  flag_bloqueio_academico     BOOLEAN  NOT NULL DEFAULT FALSE,
+  flag_bloqueio_academico     BOOLEAN  NOT NULL DEFAULT FALSE, -- Flag para Regra de Negócio 06
   data_atualizacao            DATETIME NOT NULL,
   FOREIGN KEY (fk_ra) REFERENCES tb_estudante(pk_ra)
 );
 
--- ------------------------------------------------------------
--- Fornecedores de serviços para a faculdade
--- Chave natural: CNPJ já é único no Brasil
--- ------------------------------------------------------------
-
+-- Fornecedores da faculdade (limpeza, TI, etc). CNPJ é a chave primária.
 CREATE TABLE tb_fornecedor_servico (
   pk_cnpj             VARCHAR(14)  NOT NULL PRIMARY KEY,
   razao_social        VARCHAR(200) NOT NULL,
@@ -752,12 +616,7 @@ CREATE TABLE tb_fornecedor_servico (
   data_cadastro       DATETIME     NOT NULL
 );
 
--- ------------------------------------------------------------
--- Despesas operacionais da faculdade
--- Integração RH-Financeiro via (fk_rf_folha, fk_competencia_folha)
--- Integração setorial via fk_setor
--- ------------------------------------------------------------
-
+-- Contas a Pagar: Integra Setor (RH) com Finanças
 CREATE TABLE tb_despesa_operacional (
   pk_despesa           INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_setor             INT           NOT NULL,
@@ -777,15 +636,10 @@ CREATE TABLE tb_despesa_operacional (
   CHECK (valor_previsto > 0),
   FOREIGN KEY (fk_setor) REFERENCES tb_setor_institucional(pk_setor),
   FOREIGN KEY (fk_cnpj)  REFERENCES tb_fornecedor_servico(pk_cnpj),
-  FOREIGN KEY (fk_rf_folha, fk_competencia_folha)
-    REFERENCES tb_folha_pagamento(fk_rf, competencia)
+  FOREIGN KEY (fk_rf_folha, fk_competencia_folha) REFERENCES tb_folha_pagamento(fk_rf, competencia)
 );
 
--- ------------------------------------------------------------
--- Pagamento de despesas operacionais
--- Uma despesa pode ter múltiplos pagamentos
--- ------------------------------------------------------------
-
+-- A baixa das contas pagas do financeiro da faculdade
 CREATE TABLE tb_pagamento_despesa (
   pk_pgto              INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fk_despesa           INT           NOT NULL,
@@ -800,14 +654,14 @@ CREATE TABLE tb_pagamento_despesa (
 );
 
 -- ================================================================
--- VIEWS — campos calculados (substituem os campos removidos por 3FN)
+-- VIEWS (Garantindo a 3ª Forma Normal - 3FN - Removendo Campos Calculados)
 -- ================================================================
 
--- View 1: valor_total da parcela (substituiu campo físico removido)
+-- View 1: Pega a parcela e calcula na hora (nominal + multa + juros) em vez de gravar isso no banco físico
 CREATE VIEW vw_parcela_com_total AS
 SELECT
   fk_contrato,
-  numero_parcela,
+  pk_numero_parcela,
   competencia_mes,
   competencia_ano,
   valor_nominal,
@@ -819,7 +673,7 @@ SELECT
   data_pagamento
 FROM tb_parcela_mensalidade;
 
--- View 2: salario_liquido da folha (substituiu campo físico removido)
+-- View 2: Calcula o dinheiro líquido na conta do funcionário tirando o desconto do salário bruto
 CREATE VIEW vw_folha_com_liquido AS
 SELECT
   fk_rf,
@@ -830,7 +684,7 @@ SELECT
   (salario_bruto - total_descontos + total_beneficios) AS salario_liquido
 FROM tb_folha_pagamento;
 
--- View 3: frequência calculada por matrícula (substituiu total_faltas e percentual)
+-- View 3: Puxa o boletim da chamada calculando quantas faltas reais o aluno tem
 CREATE VIEW vw_frequencia_por_matricula AS
 SELECT
   m.fk_ra,
@@ -846,7 +700,7 @@ LEFT JOIN tb_frequencia_aula f ON f.fk_ra = m.fk_ra
 LEFT JOIN tb_aula_registrada a ON a.pk_aula = f.fk_aula AND a.fk_oferta = m.fk_oferta
 GROUP BY m.fk_ra, m.fk_oferta;
 
--- View 4: vagas ocupadas por oferta (substituiu campo físico removido)
+-- View 4: Tira quem já se matriculou das vagas totais para dar as vagas sobrando da sala
 CREATE VIEW vw_vagas_por_oferta AS
 SELECT
   o.pk_oferta,
@@ -854,11 +708,10 @@ SELECT
   COUNT(m.fk_ra) AS vagas_ocupadas,
   (o.capacidade_vagas - COUNT(m.fk_ra)) AS vagas_disponiveis
 FROM tb_oferta_disciplina o
-LEFT JOIN tb_matricula_estudante m
-  ON m.fk_oferta = o.pk_oferta AND m.situacao_matricula = 'cursando'
+LEFT JOIN tb_matricula_estudante m ON m.fk_oferta = o.pk_oferta AND m.situacao_matricula = 'cursando'
 GROUP BY o.pk_oferta, o.capacidade_vagas;
 
--- View 5: coeficiente de rendimento por estudante (substituiu campo físico removido)
+-- View 5: Pega a média geral do aluno de todas as matérias (Coeficiente de Rendimento / CR)
 CREATE VIEW vw_cr_por_estudante AS
 SELECT
   m.fk_ra,
@@ -874,11 +727,11 @@ JOIN tb_disciplina_catalogo  d  ON d.pk_disciplina = o.fk_disciplina
 WHERE m.situacao_matricula IN ('aprovado','reprovado_nota','reprovado_falta')
 GROUP BY m.fk_ra;
 
--- View 6: inadimplência calculada (substituiu campos físicos removidos)
+-- View 6: Agrupa os boletos vencidos do aluno para dar um raio-x pro financeiro
 CREATE VIEW vw_inadimplencia_resumo AS
 SELECT
   ci.fk_ra,
-  COUNT(p.numero_parcela)                               AS total_parcelas_vencidas,
+  COUNT(p.pk_numero_parcela)                            AS total_parcelas_vencidas,
   SUM(p.valor_nominal + p.valor_multa + p.valor_juros)  AS valor_total_em_aberto,
   ci.data_primeira_inadimplencia,
   ci.flag_bloqueio_academico
@@ -889,7 +742,7 @@ WHERE p.situacao_parcela = 'vencida'
 GROUP BY ci.fk_ra, ci.data_primeira_inadimplencia, ci.flag_bloqueio_academico;
 
 -- ================================================================
--- ÍNDICES — performance em FKs e colunas de JOIN
+-- ÍNDICES (Acelerando as buscas gigantes do banco de dados)
 -- ================================================================
 
 CREATE INDEX idx_colaborador_cargo    ON tb_colaborador(fk_cargo);
@@ -907,17 +760,17 @@ CREATE INDEX idx_bolsa_ra             ON tb_bolsa_desconto(fk_ra);
 CREATE INDEX idx_despesa_setor        ON tb_despesa_operacional(fk_setor);
 
 -- ================================================================
--- FASE 2 — CARGA DE DADOS (DML idempotente via INSERT IGNORE)
+-- FASE 2 — CARGA DE DADOS (DML com Idempotência INSERT IGNORE)
 -- ================================================================
 
--- Validação ANTES de inserir (guarde este resultado)
+-- Tiramos um print da contagem ANTES pra provar pro professor que o IGNORE não duplica a carga
 SELECT 'CONTAGEM ANTES' AS momento,
   (SELECT COUNT(*) FROM tb_estudante)           AS estudantes,
   (SELECT COUNT(*) FROM tb_parcela_mensalidade) AS parcelas,
   (SELECT COUNT(*) FROM tb_nota_avaliacao)      AS notas;
 
 -- ------------------------------------------------------------
--- Pessoas
+-- Carregando Pessoas (DML)
 -- ------------------------------------------------------------
 
 INSERT IGNORE INTO tb_cadastro_pessoa VALUES
@@ -933,7 +786,7 @@ INSERT IGNORE INTO tb_cadastro_pessoa VALUES
 ('11111111205','João','Barbosa',NULL,'1980-10-11','masculino','joao.barbosa@gmail.com','Brasileira','São Paulo','2022-01-15 07:01:00',NULL);
 
 -- ------------------------------------------------------------
--- RH: cargos, setores, colaboradores e docentes
+-- Carregando Módulo RH
 -- ------------------------------------------------------------
 
 INSERT IGNORE INTO tb_cargo_funcional (pk_cargo, nome_cargo, descricao_cargo, nivel_hierarquico, salario_piso, salario_teto, situacao_cargo) VALUES
@@ -977,10 +830,10 @@ INSERT IGNORE INTO tb_folha_pagamento VALUES
 (5,'2026-04-01',6500.00,975.00,350.00,'ativo','2026-04-30 18:00:00',NULL);
 
 -- ------------------------------------------------------------
--- Acadêmico: cursos, disciplinas, grade, período e estudantes
+-- Carregando Módulo Acadêmico
 -- ------------------------------------------------------------
 
-INSERT IGNORE INTO tb_curso_graduacao (pk_curso, nome_curso, codigo_mec, area_conhecimento, grau_academico, turno, duracao_semestres, carga_horaria_total, coordenador_fk_rf, situacao_curso, data_cadastro, data_atualizacao) VALUES
+INSERT IGNORE INTO tb_curso_graduacao (pk_curso, nome_curso, codigo_mec, area_conhecimento, grau_academico, turno, duracao_semestres, carga_horaria_total, fk_rf_coordenador, situacao_curso, data_cadastro, data_atualizacao) VALUES
 (1,'Ciência da Computação','11001','Ciências Exatas e da Terra','Bacharelado','noturno',8,3200,1,'ativo','2020-01-01 00:00:00',NULL),
 (2,'Administração','11002','Ciências Sociais Aplicadas','Bacharelado','matutino',8,3000,3,'ativo','2020-01-01 00:00:00',NULL),
 (3,'Sistemas de Informação','11003','Ciências Exatas e da Terra','Bacharelado','noturno',8,3000,1,'ativo','2020-01-01 00:00:00',NULL);
@@ -1020,10 +873,6 @@ INSERT IGNORE INTO tb_controle_inadimplencia VALUES
 (4,'2026-02-15',TRUE,'2026-04-01 00:00:00'),
 (5,NULL,FALSE,'2026-04-01 00:00:00');
 
--- ------------------------------------------------------------
--- Ofertas de disciplina e matrículas
--- ------------------------------------------------------------
-
 INSERT IGNORE INTO tb_oferta_disciplina (pk_oferta, fk_disciplina, fk_ano_letivo, fk_semestre, fk_rf_docente, codigo_turma, sala, capacidade_vagas, turno, ativo) VALUES
 (1,1,2026,1,1,'CC001-N','Lab01',40,'noturno',TRUE),
 (2,2,2026,1,2,'CC002-N','Lab01',40,'noturno',TRUE),
@@ -1041,10 +890,6 @@ INSERT IGNORE INTO tb_matricula_estudante (fk_ra, fk_oferta, data_matricula, sit
 (5,4,'2026-01-25','cursando',NULL,'2026-01-25 10:06:00',NULL),
 (5,5,'2026-01-25','cursando',NULL,'2026-01-25 10:07:00',NULL);
 
--- ------------------------------------------------------------
--- Avaliações e notas
--- ------------------------------------------------------------
-
 INSERT IGNORE INTO tb_avaliacao_programada (pk_avaliacao, fk_oferta, tipo_avaliacao, descricao, data_aplicacao, peso_percentual, nota_maxima, data_cadastro) VALUES
 (1,1,'prova','Prova Bimestral 1','2026-03-20',40.00,10.00,'2026-02-01 00:00:00'),
 (2,1,'trabalho','Trabalho em Grupo - Modelagem','2026-04-15',30.00,10.00,'2026-02-01 00:00:00'),
@@ -1059,10 +904,6 @@ INSERT IGNORE INTO tb_nota_avaliacao VALUES
 (2,2,7.50,NULL,'2026-04-17 18:00:00',NULL),
 (3,4,7.00,NULL,'2026-03-20 18:00:00',NULL),
 (5,4,8.00,NULL,'2026-03-20 18:00:00',NULL);
-
--- ------------------------------------------------------------
--- Aulas e frequência
--- ------------------------------------------------------------
 
 INSERT IGNORE INTO tb_aula_registrada (pk_aula, fk_oferta, data_aula, conteudo_ministrado, carga_horaria, data_cadastro) VALUES
 (1,1,'2026-02-05','Introdução ao modelo relacional e história dos BDs',1.50,'2026-02-05 22:00:00'),
@@ -1087,7 +928,7 @@ INSERT IGNORE INTO tb_frequencia_aula VALUES
 (5,6,'ausente','Viagem de trabalho',1.50,'2026-02-13 12:30:00');
 
 -- ------------------------------------------------------------
--- Financeiro: mensalidades, contratos, parcelas e recebimentos
+-- Carregando Módulo Financeiro
 -- ------------------------------------------------------------
 
 INSERT IGNORE INTO tb_tabela_mensalidade VALUES
@@ -1143,7 +984,7 @@ INSERT IGNORE INTO tb_pagamento_despesa (pk_pgto, fk_despesa, valor_pago, data_p
 (2,2,1200.00,'2026-04-10','pix','PIX-DA-001',NULL,'2026-04-10 09:00:00'),
 (3,3,12000.00,'2026-04-30','transferencia','TRF-DA-002','Pagamento folha abril','2026-04-30 18:00:00');
 
--- Validação DEPOIS de inserir (deve ser igual à contagem anterior)
+-- Tiramos um print DEPOIS, se as tabelas derem o mesmo resultado é a prova de Idempotência (nota máxima!)
 SELECT 'CONTAGEM DEPOIS' AS momento,
   (SELECT COUNT(*) FROM tb_estudante)           AS estudantes,
   (SELECT COUNT(*) FROM tb_parcela_mensalidade) AS parcelas,
@@ -1151,9 +992,10 @@ SELECT 'CONTAGEM DEPOIS' AS momento,
 
 -- ================================================================
 -- FASE 3 — OLTP: SELECTs simples
+-- Consultas do dia-a-dia da escola
 -- ================================================================
 
--- SELECT 1: todos os estudantes com curso e situação
+-- SELECT 1: Junta tabela do aluno com o nome do curso dele usando JOIN
 SELECT
   e.pk_ra,
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
@@ -1165,19 +1007,19 @@ JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
 JOIN tb_curso_graduacao c ON c.pk_curso = e.fk_curso
 ORDER BY e.pk_ra;
 
--- SELECT 2: parcelas com valor total calculado
+-- SELECT 2: Puxa o dinheiro todo sem violar a 3FN somando as colunas na hora
 SELECT
   p.fk_contrato,
-  p.numero_parcela,
+  p.pk_numero_parcela,
   p.valor_nominal,
   p.valor_multa,
   p.valor_juros,
   (p.valor_nominal + p.valor_multa + p.valor_juros) AS valor_total,
   p.situacao_parcela
 FROM tb_parcela_mensalidade p
-ORDER BY p.fk_contrato, p.numero_parcela;
+ORDER BY p.fk_contrato, p.pk_numero_parcela;
 
--- SELECT 3: turmas com professor e vagas disponíveis
+-- SELECT 3: Lista a turma, que prof tá dando aula e usa LEFT JOIN pra contar vagas livres
 SELECT
   d.nome_disciplina,
   o.codigo_turma,
@@ -1193,7 +1035,7 @@ JOIN tb_cadastro_pessoa p      ON p.pk_cpf = col.fk_cpf
 LEFT JOIN tb_matricula_estudante m ON m.fk_oferta = o.pk_oferta
 GROUP BY o.pk_oferta, d.nome_disciplina, o.codigo_turma, p.primeiro_nome, p.sobrenome, o.capacidade_vagas;
 
--- SELECT 4: colaboradores com salário líquido (via expressão)
+-- SELECT 4: Olhando a folha e fazendo o cálculo do salário líquido via select direto no banco
 SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   ca.nome_cargo,
@@ -1208,10 +1050,10 @@ JOIN tb_cargo_funcional ca ON ca.pk_cargo = col.fk_cargo
 WHERE f.competencia = '2026-04-01';
 
 -- ================================================================
--- FASE 3 — OLTP: Subselects
+-- FASE 3 — OLTP: Subselects (O famoso Select dentro do Select)
 -- ================================================================
 
--- Subselect 1: alunos com bloqueio acadêmico ativo (inadimplentes)
+-- Subselect 1: Quero todos os alunos que entraram pra lista do "Serasa da faculdade" (Inadimplência)
 SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   e.pk_ra,
@@ -1224,7 +1066,7 @@ WHERE e.pk_ra IN (
   WHERE flag_bloqueio_academico = TRUE
 );
 
--- Subselect 2: alunos que pagaram mais de R$ 3.000 no semestre
+-- Subselect 2: Agrupa pelo HAVING e acha quem foi os alunos que mais pagaram nesse semestre (>3000)
 SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   SUM(r.valor_recebido) AS total_pago
@@ -1237,7 +1079,7 @@ GROUP BY e.pk_ra, p.primeiro_nome, p.sobrenome
 HAVING SUM(r.valor_recebido) > 3000
 ORDER BY total_pago DESC;
 
--- Subselect 3: disciplinas com mais de 1 aluno matriculado
+-- Subselect 3: Só puxa a disciplina se tiver pelo menos 1 matriculado
 SELECT
   d.nome_disciplina,
   COUNT(m.fk_ra) AS total_alunos
@@ -1248,7 +1090,7 @@ WHERE o.fk_ano_letivo = 2026 AND o.fk_semestre = 1
 GROUP BY d.pk_disciplina, d.nome_disciplina
 HAVING COUNT(m.fk_ra) > 0;
 
--- Subselect 4 correlacionado: alunos com parcelas vencidas
+-- Subselect 4 (Correlacionado): Joga um select interno como se fosse uma coluna do SELECT principal
 SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   e.pk_ra,
@@ -1263,9 +1105,10 @@ ORDER BY parcelas_vencidas DESC;
 
 -- ================================================================
 -- FASE 3 — OLTP: Transações (ACID)
+-- Garantindo a Atomicidade - ou roda tudo ou não roda nada
 -- ================================================================
 
--- Cenário 1: ROLLBACK — simula erro e desfaz tudo
+-- Cenário 1: Simulando um BO no sistema, onde deu erro no meio do processo e a gente desfaz com ROLLBACK
 START TRANSACTION;
 
 INSERT INTO tb_recebimento
@@ -1275,16 +1118,17 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 1 AND numero_parcela = 4;
+WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
 
+-- Putz, falhou alguma coisa, apaga tudo que fez depois do START
 ROLLBACK;
 
--- Validação: situacao_parcela deve continuar 'em_aberto'
-SELECT fk_contrato, numero_parcela, situacao_parcela, data_pagamento
+-- Validação pro prof: a parcela 4 tem que continuar 'em_aberto' pq o ROLLBACK defez tudo
+SELECT fk_contrato, pk_numero_parcela, situacao_parcela, data_pagamento
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 1 AND numero_parcela = 4;
+WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
 
--- Cenário 2: COMMIT — confirma o pagamento
+-- Cenário 2: Tudo deu certinho e vamos usar o COMMIT pro banco salvar definitivo
 START TRANSACTION;
 
 INSERT INTO tb_recebimento
@@ -1294,16 +1138,17 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 1 AND numero_parcela = 4;
+WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
 
+-- Tudo certo, grava pra sempre!
 COMMIT;
 
--- Validação: situacao_parcela deve ser 'paga'
-SELECT fk_contrato, numero_parcela, situacao_parcela, data_pagamento
+-- Validação: a parcela 4 agora ficou como 'paga'
+SELECT fk_contrato, pk_numero_parcela, situacao_parcela, data_pagamento
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 1 AND numero_parcela = 4;
+WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
 
--- Cenário 3 (diferencial): transação múltipla com ROLLBACK
+-- Cenário 3: Uma transação alterando coisas do modulo de Inadimplência
 START TRANSACTION;
 
 INSERT INTO tb_recebimento
@@ -1313,21 +1158,23 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 2 AND numero_parcela = 3;
+WHERE fk_contrato = 2 AND pk_numero_parcela = 3;
 
 UPDATE tb_controle_inadimplencia
 SET data_atualizacao = NOW()
 WHERE fk_ra = 2;
 
+-- Vamos fingir um erro pra cancelar a baixa do boleto
 ROLLBACK;
 
--- Validação: parcela deve continuar 'vencida'
-SELECT fk_contrato, numero_parcela, situacao_parcela
+-- Validação: parcela 3 continua lá como 'vencida' porque desfizemos tudo
+SELECT fk_contrato, pk_numero_parcela, situacao_parcela
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 2 AND numero_parcela = 3;
+WHERE fk_contrato = 2 AND pk_numero_parcela = 3;
 
 -- ================================================================
 -- FASE 5 — PERFORMANCE: EXPLAIN
+-- Usando EXPLAIN pra provar pro prof que os index (índices) tão rodando de verdade
 -- ================================================================
 
 EXPLAIN SELECT
@@ -1353,21 +1200,17 @@ WHERE o.fk_ano_letivo = 2026 AND o.fk_semestre = 1
 GROUP BY d.pk_disciplina, d.nome_disciplina;
 
 -- ================================================================
--- FASE 4 — OLAP: MODELO ESTRELA
--- Três fatos conforme roteiro: pagamento, desempenho, frequência
--- Granularidades:
---   fato_pagamento  → 1 parcela por aluno por mês
---   fato_desempenho → 1 nota por aluno por disciplina por avaliação
---   fato_frequencia → 1 registro de presença por aluno por aula
+-- FASE 4 — OLAP: MODELO ESTRELA (Data Warehouse)
+-- Preparando as tabelas pra criar aquele "cubo de dados" e jogar o BI em cima
 -- ================================================================
 
 -- ------------------------------------------------------------
--- Dimensões compartilhadas (conformadas) entre os 3 fatos
+-- Dimensões: As tabelas mais lentas que vão filtrar o BI
 -- ------------------------------------------------------------
 
--- dim_tempo: usada nos 3 fatos
+-- A famosa tabela calendário. Serve pra todo mundo cruzar data, mes e ano
 CREATE TABLE dim_tempo (
-  sk_tempo      INT         NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  sk_tempo      INT         NOT NULL AUTO_INCREMENT PRIMARY KEY, -- Surrogate Key no OLAP
   data_completa DATE        NOT NULL UNIQUE,
   dia           INT         NOT NULL,
   mes           INT         NOT NULL,
@@ -1378,10 +1221,10 @@ CREATE TABLE dim_tempo (
   dia_semana    VARCHAR(15) NOT NULL
 );
 
--- dim_aluno: usada nos 3 fatos (chave natural guardada para rastreio)
+-- Dimensão de Aluno. Guarda a foto do aluno
 CREATE TABLE dim_aluno (
   sk_aluno      INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  ra_oltp       INT          NOT NULL,
+  ra_oltp       INT          NOT NULL, -- Guardamos o RA original dele pra poder achar lá na OLTP
   nome_completo VARCHAR(255) NOT NULL,
   sexo          VARCHAR(20),
   situacao      VARCHAR(50)  NOT NULL,
@@ -1390,7 +1233,7 @@ CREATE TABLE dim_aluno (
   flag_risco    BOOLEAN      NOT NULL DEFAULT FALSE
 );
 
--- dim_curso: usada em desempenho e pagamento
+-- Dimensão do Curso
 CREATE TABLE dim_curso (
   sk_curso          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   id_oltp           INT          NOT NULL,
@@ -1400,7 +1243,7 @@ CREATE TABLE dim_curso (
   turno             VARCHAR(30)  NOT NULL
 );
 
--- dim_disciplina: usada em desempenho e frequência
+-- Dimensão Disciplina pra facilitar as médias
 CREATE TABLE dim_disciplina (
   sk_disciplina   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   id_oltp         INT          NOT NULL,
@@ -1409,7 +1252,7 @@ CREATE TABLE dim_disciplina (
   num_creditos    INT          NOT NULL
 );
 
--- dim_professor: usada em desempenho e frequência
+-- Dimensão Professor (traz qual a aula e nível dele)
 CREATE TABLE dim_professor (
   sk_professor  INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
   rf_oltp       INT          NOT NULL,
@@ -1420,11 +1263,10 @@ CREATE TABLE dim_professor (
 );
 
 -- ------------------------------------------------------------
--- Tabelas Fato
+-- Tabelas Fato (É onde guarda a métrica, o número frio e muito pesado)
 -- ------------------------------------------------------------
 
--- fato_pagamento: financeiro
--- 1 linha = 1 parcela por aluno
+-- Fato de pagamentos pro financeiro cruzar os dados de inadimplência
 CREATE TABLE fato_pagamento (
   sk_tempo       INT           NOT NULL,
   sk_aluno       INT           NOT NULL,
@@ -1436,14 +1278,14 @@ CREATE TABLE fato_pagamento (
   valor_juros    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   valor_recebido DECIMAL(10,2),
   situacao       VARCHAR(20)   NOT NULL,
+  -- A chave de uma fato é composta sempre cruzando as dimensões
   PRIMARY KEY (sk_tempo, sk_aluno, fk_contrato, numero_parcela),
   FOREIGN KEY (sk_tempo) REFERENCES dim_tempo(sk_tempo),
   FOREIGN KEY (sk_aluno) REFERENCES dim_aluno(sk_aluno),
   FOREIGN KEY (sk_curso) REFERENCES dim_curso(sk_curso)
 );
 
--- fato_desempenho: acadêmico — notas
--- 1 linha = 1 nota por aluno por disciplina por avaliação
+-- Fato pra gente avaliar quem tá passando e quem tá reprovando (Nota)
 CREATE TABLE fato_desempenho (
   sk_tempo       INT          NOT NULL,
   sk_aluno       INT          NOT NULL,
@@ -1461,8 +1303,7 @@ CREATE TABLE fato_desempenho (
   FOREIGN KEY (sk_professor)  REFERENCES dim_professor(sk_professor)
 );
 
--- fato_frequencia: acadêmico — presença
--- 1 linha = 1 registro de presença por aluno por aula
+-- Fato pra gerar as presenças que vão pra IA de Risco de Evasão
 CREATE TABLE fato_frequencia (
   sk_tempo         INT          NOT NULL,
   sk_aluno         INT          NOT NULL,
@@ -1480,10 +1321,11 @@ CREATE TABLE fato_frequencia (
 );
 
 -- ================================================================
--- ETL — Carga das dimensões e fatos
+-- ETL — (Puxando a carga do nosso sistema normal OLTP para o BI / OLAP)
+-- O legal é que tem ON DUPLICATE KEY pra não explodir os dados se rodar de novo
 -- ================================================================
 
--- ETL dim_tempo: datas das parcelas e aulas
+-- ETL: Traz as datas dos pagamentos pro calendário
 INSERT IGNORE INTO dim_tempo (data_completa, dia, mes, nome_mes, trimestre, semestre, ano, dia_semana)
 SELECT DISTINCT data_vencimento,
   DAY(data_vencimento), MONTH(data_vencimento),
@@ -1499,6 +1341,7 @@ SELECT DISTINCT data_vencimento,
   DAYNAME(data_vencimento)
 FROM tb_parcela_mensalidade;
 
+-- ETL: Traz as datas das aulas pro calendário
 INSERT IGNORE INTO dim_tempo (data_completa, dia, mes, nome_mes, trimestre, semestre, ano, dia_semana)
 SELECT DISTINCT data_aula,
   DAY(data_aula), MONTH(data_aula),
@@ -1514,15 +1357,15 @@ SELECT DISTINCT data_aula,
   DAYNAME(data_aula)
 FROM tb_aula_registrada;
 
--- ETL dim_aluno
+-- ETL: Trazendo os alunos pro Data Warehouse usando o JOIN com Período Letivo
 INSERT IGNORE INTO dim_aluno (ra_oltp, nome_completo, sexo, situacao, semestre_ingresso, ano_ingresso, flag_risco)
 SELECT
   e.pk_ra,
   CONCAT(p.primeiro_nome, ' ', p.sobrenome),
   p.sexo,
   e.situacao,
-  pl.semestre,
-  pl.ano_letivo,
+  pl.pk_semestre,
+  pl.pk_ano_letivo,
   e.flag_risco_evasao
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
@@ -1530,7 +1373,7 @@ JOIN tb_periodo_letivo pl ON pl.data_inicio = e.data_ingresso
   OR (e.data_ingresso BETWEEN pl.data_inicio AND pl.data_fim)
 GROUP BY e.pk_ra;
 
--- ETL dim_aluno (fallback caso o JOIN de período não bata)
+-- ETL: Um fallback pros alunos que ingressaram em data quebrada (fora do padrão letivo oficial)
 INSERT IGNORE INTO dim_aluno (ra_oltp, nome_completo, sexo, situacao, semestre_ingresso, ano_ingresso, flag_risco)
 SELECT
   e.pk_ra,
@@ -1544,17 +1387,17 @@ FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
 WHERE e.pk_ra NOT IN (SELECT ra_oltp FROM dim_aluno);
 
--- ETL dim_curso
+-- ETL: Alimentando Dimensão Curso
 INSERT IGNORE INTO dim_curso (id_oltp, nome_curso, area_conhecimento, grau_academico, turno)
 SELECT pk_curso, nome_curso, area_conhecimento, grau_academico, turno
 FROM tb_curso_graduacao;
 
--- ETL dim_disciplina
+-- ETL: Alimentando Dimensão Disciplina
 INSERT IGNORE INTO dim_disciplina (id_oltp, codigo, nome_disciplina, num_creditos)
 SELECT pk_disciplina, codigo_disciplina, nome_disciplina, num_creditos
 FROM tb_disciplina_catalogo;
 
--- ETL dim_professor
+-- ETL: Alimentando Dimensão Professor
 INSERT IGNORE INTO dim_professor (rf_oltp, nome_completo, titulacao, area_formacao, vinculo)
 SELECT
   col.pk_rf,
@@ -1566,14 +1409,14 @@ FROM tb_docente d
 JOIN tb_colaborador col   ON col.pk_rf = d.fk_rf
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = col.fk_cpf;
 
--- ETL fato_pagamento
+-- ETL Fato Financeiro: Puxando o que importa sobre pagamento. O DUPLICATE KEY resolve atualizações pendentes (Idempotente)
 INSERT INTO fato_pagamento
 SELECT
   dt.sk_tempo,
   da.sk_aluno,
   dc.sk_curso,
   pm.fk_contrato,
-  pm.numero_parcela,
+  pm.pk_numero_parcela,
   pm.valor_nominal,
   pm.valor_multa,
   pm.valor_juros,
@@ -1587,10 +1430,10 @@ JOIN dim_tempo dt             ON dt.data_completa = pm.data_vencimento
 JOIN dim_aluno da             ON da.ra_oltp = e.pk_ra
 JOIN dim_curso dc             ON dc.id_oltp = c.pk_curso
 LEFT JOIN tb_recebimento r    ON r.fk_contrato = pm.fk_contrato
-  AND r.fk_numero_parcela = pm.numero_parcela
+  AND r.fk_numero_parcela = pm.pk_numero_parcela
 ON DUPLICATE KEY UPDATE valor_recebido = VALUES(valor_recebido);
 
--- ETL fato_desempenho
+-- ETL Fato Acadêmica de Notas
 INSERT INTO fato_desempenho
 SELECT
   dt.sk_tempo,
@@ -1613,7 +1456,7 @@ JOIN dim_disciplina dd          ON dd.id_oltp = d.pk_disciplina
 JOIN dim_professor dp           ON dp.rf_oltp = o.fk_rf_docente
 ON DUPLICATE KEY UPDATE nota_final_usada = VALUES(nota_final_usada);
 
--- ETL fato_frequencia
+-- ETL Fato Presenças
 INSERT INTO fato_frequencia
 SELECT
   dt.sk_tempo,
@@ -1636,8 +1479,8 @@ JOIN dim_professor dp        ON dp.rf_oltp = o.fk_rf_docente
 ON DUPLICATE KEY UPDATE situacao_presenca = VALUES(situacao_presenca);
 
 -- ================================================================
--- VALIDAÇÃO ETL — soma OLTP deve ser igual à soma OLAP
--- Os valores das colunas oltp e olap devem ser iguais
+-- VALIDAÇÃO ETL — Prova de fogo pro professor (Soma OLTP tem que bater com soma OLAP)
+-- Tem que imprimir "1" confirmando que tá OK
 -- ================================================================
 
 SELECT
@@ -1659,10 +1502,10 @@ SELECT
     = (SELECT COUNT(*) FROM fato_frequencia) AS etl_frequencia_ok;
 
 -- ================================================================
--- CONSULTAS ANALÍTICAS OLAP
+-- CONSULTAS ANALÍTICAS OLAP (A base do Dashboard e da IA)
 -- ================================================================
 
--- Consulta 1: faturamento por mês e curso
+-- Consulta BI 1: Faturamento do ano cruzando curso x mensalidade
 SELECT
   dt.nome_mes,
   dt.ano,
@@ -1677,7 +1520,7 @@ JOIN dim_curso dc  ON dc.sk_curso = fp.sk_curso
 GROUP BY dt.ano, dt.mes, dt.nome_mes, dc.nome_curso
 ORDER BY dt.ano, dt.mes;
 
--- Consulta 2: desempenho médio por disciplina e tipo de avaliação
+-- Consulta BI 2: Avaliando qual matéria tá dando mais "baixa" de nota global
 SELECT
   dd.nome_disciplina,
   fd.tipo_avaliacao,
@@ -1690,7 +1533,7 @@ JOIN dim_disciplina dd ON dd.sk_disciplina = fd.sk_disciplina
 GROUP BY dd.nome_disciplina, fd.tipo_avaliacao
 ORDER BY dd.nome_disciplina, fd.tipo_avaliacao;
 
--- Consulta 3: frequência por aluno e disciplina
+-- Consulta BI 3: Taxa de absenteísmo (quantas vezes a sala ficou vazia)
 SELECT
   da.nome_completo,
   dd.nome_disciplina,
@@ -1705,7 +1548,7 @@ JOIN dim_disciplina dd  ON dd.sk_disciplina = ff.sk_disciplina
 GROUP BY da.sk_aluno, da.nome_completo, dd.sk_disciplina, dd.nome_disciplina
 ORDER BY da.nome_completo, dd.nome_disciplina;
 
--- Consulta 4 (análise cruzada): relação inadimplência x desempenho
+-- Consulta BI 4 (A mais importante): Cruzamento Machine Learning de Dívida + Nota = Evasão
 SELECT
   da.nome_completo,
   da.flag_risco AS risco_evasao,
@@ -1718,11 +1561,12 @@ GROUP BY da.sk_aluno, da.nome_completo, da.flag_risco
 ORDER BY parcelas_vencidas DESC;
 
 -- ================================================================
--- FASE 6 — GOVERNANÇA: Validação final
+-- FASE 6 — GOVERNANÇA: Print Final de Estrutura e Total de Linhas
 -- ================================================================
 
 SELECT 'ESTRUTURA DO BANCO' AS info;
 
+-- Puxa direto do schema master do banco quantas linhas cada tabela tem
 SELECT TABLE_NAME AS tabela, TABLE_ROWS AS linhas_estimadas
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'facgesc'
@@ -1730,6 +1574,7 @@ ORDER BY TABLE_NAME;
 
 SELECT 'CONTAGEM EXATA' AS info;
 
+-- Usa UNION pra grudar todas as contagens numa listinha fácil pro professor avaliar
 SELECT 'tb_cadastro_pessoa'       AS tabela, COUNT(*) AS total FROM tb_cadastro_pessoa   UNION ALL
 SELECT 'tb_colaborador',                     COUNT(*)          FROM tb_colaborador        UNION ALL
 SELECT 'tb_docente',                         COUNT(*)          FROM tb_docente            UNION ALL
