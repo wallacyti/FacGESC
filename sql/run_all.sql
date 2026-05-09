@@ -1036,14 +1036,14 @@ ORDER BY e.pk_ra;
 
 SELECT
   p.fk_contrato,
-  p.pk_numero_parcela,
+  p.numero_parcela,
   p.valor_nominal,
   p.valor_multa,
   p.valor_juros,
   (p.valor_nominal + p.valor_multa + p.valor_juros) AS valor_total,
   p.situacao_parcela
 FROM tb_parcela_mensalidade p
-ORDER BY p.fk_contrato, p.pk_numero_parcela;
+ORDER BY p.fk_contrato, p.numero_parcela;
 
 SELECT
   d.nome_disciplina,
@@ -1093,7 +1093,6 @@ SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   SUM(r.valor_recebido) AS total_pago
 FROM tb_estudante e
-JOIN tb_cadastro_pessoa pe ON pe.pk_cpf = e.fk_cpf -- ESTA É A LINHA QUE VOCÊ DEVE APAGAR
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
 JOIN tb_contrato_academico ca ON ca.fk_ra = e.pk_ra
 JOIN tb_recebimento r ON r.fk_contrato = ca.pk_contrato
@@ -1134,12 +1133,12 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
+WHERE fk_contrato = 1 AND numero_parcela = 4;
 ROLLBACK;
 
-SELECT fk_contrato, pk_numero_parcela, situacao_parcela, data_pagamento
+SELECT fk_contrato, numero_parcela, situacao_parcela, data_pagamento
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
+WHERE fk_contrato = 1 AND numero_parcela = 4;
 
 START TRANSACTION;
 INSERT INTO tb_recebimento
@@ -1149,12 +1148,12 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
+WHERE fk_contrato = 1 AND numero_parcela = 4;
 COMMIT;
 
-SELECT fk_contrato, pk_numero_parcela, situacao_parcela, data_pagamento
+SELECT fk_contrato, numero_parcela, situacao_parcela, data_pagamento
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 1 AND pk_numero_parcela = 4;
+WHERE fk_contrato = 1 AND numero_parcela = 4;
 
 START TRANSACTION;
 INSERT INTO tb_recebimento
@@ -1164,16 +1163,16 @@ VALUES
 
 UPDATE tb_parcela_mensalidade
 SET situacao_parcela = 'paga', data_pagamento = CURDATE()
-WHERE fk_contrato = 2 AND pk_numero_parcela = 3;
+WHERE fk_contrato = 2 AND numero_parcela = 3;
 
 UPDATE tb_controle_inadimplencia
 SET data_atualizacao = NOW()
 WHERE fk_ra = 2;
 ROLLBACK;
 
-SELECT fk_contrato, pk_numero_parcela, situacao_parcela
+SELECT fk_contrato, numero_parcela, situacao_parcela
 FROM tb_parcela_mensalidade
-WHERE fk_contrato = 2 AND pk_numero_parcela = 3;
+WHERE fk_contrato = 2 AND numero_parcela = 3;
 
 -- ================================================================
 -- FASE 5 — PERFORMANCE: EXPLAIN
@@ -1377,7 +1376,7 @@ SELECT
   da.sk_aluno,
   dc.sk_curso,
   pm.fk_contrato,
-  pm.pk_numero_parcela,
+  pm.numero_parcela,
   pm.valor_nominal,
   pm.valor_multa,
   pm.valor_juros,
@@ -1391,7 +1390,7 @@ JOIN dim_tempo dt             ON dt.data_completa = pm.data_vencimento
 JOIN dim_aluno da             ON da.ra_oltp = e.pk_ra
 JOIN dim_curso dc             ON dc.id_oltp = c.pk_curso
 LEFT JOIN tb_recebimento r    ON r.fk_contrato = pm.fk_contrato
-  AND r.fk_numero_parcela = pm.pk_numero_parcela
+  AND r.fk_numero_parcela = pm.numero_parcela
 ON DUPLICATE KEY UPDATE valor_recebido = VALUES(valor_recebido);
 
 INSERT INTO fato_desempenho
