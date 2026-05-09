@@ -1120,6 +1120,7 @@ SELECT
    WHERE ca.fk_ra = e.pk_ra AND pm.situacao_parcela = 'vencida') AS parcelas_vencidas
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
+GROUP BY e.pk_ra, p.primeiro_nome, p.sobrenome -- ADICIONA ESTA LINHA AQUI!
 HAVING parcelas_vencidas >= 1
 ORDER BY parcelas_vencidas DESC;
 
@@ -1220,7 +1221,7 @@ CREATE TABLE dim_tempo (
 
 CREATE TABLE dim_aluno (
   sk_aluno      INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  ra_oltp       INT          NOT NULL,
+  ra_oltp       INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
   nome_completo VARCHAR(255) NOT NULL,
   sexo          VARCHAR(20),
   situacao      VARCHAR(50)  NOT NULL,
@@ -1231,7 +1232,7 @@ CREATE TABLE dim_aluno (
 
 CREATE TABLE dim_curso (
   sk_curso          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  id_oltp           INT          NOT NULL,
+  id_oltp           INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
   nome_curso        VARCHAR(150) NOT NULL,
   area_conhecimento VARCHAR(100) NOT NULL,
   grau_academico    VARCHAR(50)  NOT NULL,
@@ -1240,7 +1241,7 @@ CREATE TABLE dim_curso (
 
 CREATE TABLE dim_disciplina (
   sk_disciplina   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  id_oltp         INT          NOT NULL,
+  id_oltp         INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
   codigo          VARCHAR(20)  NOT NULL,
   nome_disciplina VARCHAR(150) NOT NULL,
   num_creditos    INT          NOT NULL
@@ -1248,7 +1249,7 @@ CREATE TABLE dim_disciplina (
 
 CREATE TABLE dim_professor (
   sk_professor  INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  rf_oltp       INT          NOT NULL,
+  rf_oltp       INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
   nome_completo VARCHAR(255) NOT NULL,
   titulacao     VARCHAR(80)  NOT NULL,
   area_formacao VARCHAR(150) NOT NULL,
@@ -1345,27 +1346,13 @@ SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome),
   p.sexo,
   e.situacao,
-  pl.pk_semestre,
-  pl.pk_ano_letivo,
+  pl.semestre,
+  pl.ano_letivo,
   e.flag_risco_evasao
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
-JOIN tb_periodo_letivo pl ON pl.data_inicio = e.data_ingresso
-  OR (e.data_ingresso BETWEEN pl.data_inicio AND pl.data_fim)
+JOIN tb_periodo_letivo pl ON e.data_ingresso BETWEEN pl.data_inicio AND pl.data_fim
 GROUP BY e.pk_ra;
-
-INSERT IGNORE INTO dim_aluno (ra_oltp, nome_completo, sexo, situacao, semestre_ingresso, ano_ingresso, flag_risco)
-SELECT
-  e.pk_ra,
-  CONCAT(p.primeiro_nome, ' ', p.sobrenome),
-  p.sexo,
-  e.situacao,
-  1,
-  YEAR(e.data_ingresso),
-  e.flag_risco_evasao
-FROM tb_estudante e
-JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
-WHERE e.pk_ra NOT IN (SELECT ra_oltp FROM dim_aluno);
 
 INSERT IGNORE INTO dim_curso (id_oltp, nome_curso, area_conhecimento, grau_academico, turno)
 SELECT pk_curso, nome_curso, area_conhecimento, grau_academico, turno
@@ -1386,7 +1373,7 @@ FROM tb_docente d
 JOIN tb_colaborador col   ON col.pk_rf = d.fk_rf
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = col.fk_cpf;
 
-INSERT INTO fato_pagamento
+INSERT IGNORE INTO fato_pagamento
 SELECT
   dt.sk_tempo,
   da.sk_aluno,
