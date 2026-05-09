@@ -1117,7 +1117,7 @@ SELECT
    WHERE ca.fk_ra = e.pk_ra AND pm.situacao_parcela = 'vencida') AS parcelas_vencidas
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
-GROUP BY e.pk_ra, p.primeiro_nome, p.sobrenome -- ADICIONA ESTA LINHA AQUI!
+GROUP BY e.pk_ra, p.primeiro_nome, p.sobrenome
 HAVING parcelas_vencidas >= 1
 ORDER BY parcelas_vencidas DESC;
 
@@ -1218,7 +1218,7 @@ CREATE TABLE dim_tempo (
 
 CREATE TABLE dim_aluno (
   sk_aluno      INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  ra_oltp       INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
+  ra_oltp       INT          NOT NULL UNIQUE, 
   nome_completo VARCHAR(255) NOT NULL,
   sexo          VARCHAR(20),
   situacao      VARCHAR(50)  NOT NULL,
@@ -1229,7 +1229,7 @@ CREATE TABLE dim_aluno (
 
 CREATE TABLE dim_curso (
   sk_curso          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  id_oltp           INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
+  id_oltp           INT          NOT NULL UNIQUE, 
   nome_curso        VARCHAR(150) NOT NULL,
   area_conhecimento VARCHAR(100) NOT NULL,
   grau_academico    VARCHAR(50)  NOT NULL,
@@ -1238,7 +1238,7 @@ CREATE TABLE dim_curso (
 
 CREATE TABLE dim_disciplina (
   sk_disciplina   INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  id_oltp         INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
+  id_oltp         INT          NOT NULL UNIQUE, 
   codigo          VARCHAR(20)  NOT NULL,
   nome_disciplina VARCHAR(150) NOT NULL,
   num_creditos    INT          NOT NULL
@@ -1246,7 +1246,7 @@ CREATE TABLE dim_disciplina (
 
 CREATE TABLE dim_professor (
   sk_professor  INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  rf_oltp       INT          NOT NULL UNIQUE, -- ADICIONADO O UNIQUE AQUI
+  rf_oltp       INT          NOT NULL UNIQUE, 
   nome_completo VARCHAR(255) NOT NULL,
   titulacao     VARCHAR(80)  NOT NULL,
   area_formacao VARCHAR(150) NOT NULL,
@@ -1349,7 +1349,7 @@ SELECT
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
 JOIN tb_periodo_letivo pl ON e.data_ingresso BETWEEN pl.data_inicio AND pl.data_fim
-GROUP BY e.pk_ra;
+GROUP BY e.pk_ra, p.sexo, e.situacao, pl.pk_semestre, pl.pk_ano_letivo, e.flag_risco_evasao;
 
 INSERT IGNORE INTO dim_curso (id_oltp, nome_curso, area_conhecimento, grau_academico, turno)
 SELECT pk_curso, nome_curso, area_conhecimento, grau_academico, turno
@@ -1393,7 +1393,7 @@ LEFT JOIN tb_recebimento r    ON r.fk_contrato = pm.fk_contrato
   AND r.fk_numero_parcela = pm.numero_parcela
 ON DUPLICATE KEY UPDATE valor_recebido = VALUES(valor_recebido);
 
-INSERT INTO fato_desempenho
+INSERT IGNORE INTO fato_desempenho
 SELECT
   dt.sk_tempo,
   da.sk_aluno,
@@ -1415,7 +1415,7 @@ JOIN dim_disciplina dd          ON dd.id_oltp = d.pk_disciplina
 JOIN dim_professor dp           ON dp.rf_oltp = o.fk_rf_docente
 ON DUPLICATE KEY UPDATE nota_final_usada = VALUES(nota_final_usada);
 
-INSERT INTO fato_frequencia
+INSERT IGNORE INTO fato_frequencia
 SELECT
   dt.sk_tempo,
   da.sk_aluno,
@@ -1548,5 +1548,5 @@ SELECT 'fato_desempenho',                    COUNT(*)          FROM fato_desempe
 SELECT 'fato_frequencia',                    COUNT(*)          FROM fato_frequencia;
 
 -- ================================================================
--- FIM DO SCRIPT
+-- FIM ! ! ! ! ! 
 -- ================================================================
