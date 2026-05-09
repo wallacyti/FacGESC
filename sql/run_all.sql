@@ -381,21 +381,21 @@ CREATE TABLE tb_estudante_responsavel (
 -- ------------------------------------------------------------
 
 CREATE TABLE tb_oferta_disciplina (
-  pk_oferta        INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  fk_disciplina    INT          NOT NULL,
-  fk_ano_letivo    INT          NOT NULL,
-  fk_semestre      INT          NOT NULL,
-  fk_rf_docente    INT          NOT NULL,
-  codigo_turma     VARCHAR(10)  NOT NULL,
+  pk_oferta        INT     NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  fk_disciplina    INT     NOT NULL,
+  fk_ano_letivo    INT     NOT NULL,
+  fk_semestre      INT     NOT NULL,
+  fk_rf_docente    INT     NOT NULL,
+  codigo_turma     VARCHAR(10) NOT NULL,
   sala             VARCHAR(20),
-  capacidade_vagas INT          NOT NULL DEFAULT 40,
+  capacidade_vagas INT     NOT NULL DEFAULT 40,
   turno            ENUM('matutino','vespertino','noturno','ead') NOT NULL,
-  ativo            BOOLEAN      NOT NULL DEFAULT TRUE,
+  ativo            BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE (fk_disciplina, fk_ano_letivo, fk_semestre, codigo_turma),
   CHECK (capacidade_vagas > 0),
-  FOREIGN KEY (fk_disciplina)              REFERENCES tb_disciplina_catalogo(pk_disciplina),
-  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(pk_ano_letivo, pk_semestre),
-  FOREIGN KEY (fk_rf_docente)              REFERENCES tb_docente(fk_rf)
+  FOREIGN KEY (fk_disciplina) REFERENCES tb_disciplina_catalogo(pk_disciplina),
+  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(ano_letivo, semestre),
+  FOREIGN KEY (fk_rf_docente) REFERENCES tb_docente(fk_rf)
 );
 
 -- ------------------------------------------------------------
@@ -404,16 +404,16 @@ CREATE TABLE tb_oferta_disciplina (
 -- ------------------------------------------------------------
 
 CREATE TABLE tb_matricula_estudante (
-  fk_ra              INT      NOT NULL,
-  fk_oferta          INT      NOT NULL,
-  data_matricula     DATE     NOT NULL,
-  situacao_matricula ENUM('cursando','aprovado','reprovado_nota','reprovado_falta','trancado','dispensado') NOT NULL DEFAULT 'cursando',
-  nota_final         DECIMAL(5,2),
-  data_cadastro      DATETIME NOT NULL,
-  data_atualizacao   DATETIME,
+  fk_ra                INT           NOT NULL,
+  fk_oferta            INT           NOT NULL,
+  data_matricula       DATE          NOT NULL,
+  situacao_matricula   ENUM('cursando','aprovado','reprovado_nota','reprovado_falta','trancado','dispensado') NOT NULL DEFAULT 'cursando',
+  nota_final           DECIMAL(5,2),
+  data_cadastro        DATETIME      NOT NULL,
+  data_atualizacao     DATETIME,
   PRIMARY KEY (fk_ra, fk_oferta),
   CHECK (nota_final IS NULL OR nota_final BETWEEN 0.00 AND 10.00),
-  FOREIGN KEY (fk_ra)     REFERENCES tb_estudante(pk_ra),
+  FOREIGN KEY (fk_ra)    REFERENCES tb_estudante(pk_ra),
   FOREIGN KEY (fk_oferta) REFERENCES tb_oferta_disciplina(pk_oferta)
 );
 
@@ -589,20 +589,20 @@ CREATE TABLE tb_contrato_academico (
 -- ------------------------------------------------------------
 
 CREATE TABLE tb_parcela_mensalidade (
-  fk_contrato        INT           NOT NULL,
-  pk_numero_parcela  INT           NOT NULL,
-  competencia_mes    INT           NOT NULL,
-  competencia_ano    INT           NOT NULL,
-  valor_nominal      DECIMAL(10,2) NOT NULL,
-  valor_multa        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  valor_juros        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  data_vencimento    DATE          NOT NULL,
-  situacao_parcela   ENUM('em_aberto','paga','vencida','renegociada','cancelada','isenta') NOT NULL DEFAULT 'em_aberto',
-  data_pagamento     DATE,
-  data_cadastro      DATETIME      NOT NULL,
-  data_atualizacao   DATETIME,
-  PRIMARY KEY (fk_contrato, pk_numero_parcela),
-  CHECK (pk_numero_parcela > 0),
+  fk_contrato      INT           NOT NULL,
+  numero_parcela   INT           NOT NULL,
+  competencia_mes  INT           NOT NULL,
+  competencia_ano  INT           NOT NULL,
+  valor_nominal    DECIMAL(10,2) NOT NULL,
+  valor_multa      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  valor_juros      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  data_vencimento  DATE          NOT NULL,
+  situacao_parcela ENUM('em_aberto','paga','vencida','renegociada','cancelada','isenta') NOT NULL DEFAULT 'em_aberto',
+  data_pagamento   DATE,
+  data_cadastro    DATETIME      NOT NULL,
+  data_atualizacao DATETIME,
+  PRIMARY KEY (fk_contrato, numero_parcela),
+  CHECK (numero_parcela > 0),
   CHECK (competencia_mes BETWEEN 1 AND 12),
   CHECK (valor_nominal > 0),
   CHECK (valor_multa >= 0),
@@ -637,10 +637,10 @@ CREATE TABLE tb_recebimento (
 -- ------------------------------------------------------------
 
 CREATE TABLE tb_controle_inadimplencia (
-  fk_ra                       INT      NOT NULL PRIMARY KEY,
+  fk_ra                       INT           NOT NULL PRIMARY KEY,
   data_primeira_inadimplencia DATE,
-  flag_bloqueio_academico     BOOLEAN  NOT NULL DEFAULT FALSE,
-  data_atualizacao            DATETIME NOT NULL,
+  flag_bloqueio_academico     BOOLEAN       NOT NULL DEFAULT FALSE,
+  data_atualizacao            DATETIME      NOT NULL,
   FOREIGN KEY (fk_ra) REFERENCES tb_estudante(pk_ra)
 );
 
