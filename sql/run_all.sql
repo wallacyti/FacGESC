@@ -297,12 +297,11 @@ CREATE TABLE tb_periodo_letivo (
   data_inicio_matricula DATE    NOT NULL,
   data_fim_matricula    DATE    NOT NULL,
   ativo                 BOOLEAN NOT NULL DEFAULT FALSE,
-  PRIMARY KEY (pk_ano_letivo, pk_semestre),
+  PRIMARY KEY (pk_ano_letivo, pk_semestre), -- Nomes corrigidos aqui
   CHECK (pk_semestre IN (1, 2)),
   CHECK (data_fim > data_inicio),
   CHECK (data_fim_matricula >= data_inicio_matricula)
 );
-
 -- ------------------------------------------------------------
 -- Estudantes da faculdade (dados acadêmicos)
 -- Dados pessoais ficam em tb_cadastro_pessoa via fk_cpf
@@ -394,7 +393,7 @@ CREATE TABLE tb_oferta_disciplina (
   UNIQUE (fk_disciplina, fk_ano_letivo, fk_semestre, codigo_turma),
   CHECK (capacidade_vagas > 0),
   FOREIGN KEY (fk_disciplina) REFERENCES tb_disciplina_catalogo(pk_disciplina),
-  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(ano_letivo, semestre),
+  FOREIGN KEY (fk_ano_letivo, fk_semestre) REFERENCES tb_periodo_letivo(pk_ano_letivo, pk_semestre),
   FOREIGN KEY (fk_rf_docente) REFERENCES tb_docente(fk_rf)
 );
 
@@ -627,7 +626,8 @@ CREATE TABLE tb_recebimento (
   fk_rf_operador       INT,
   data_cadastro        DATETIME      NOT NULL,
   CHECK (valor_recebido > 0),
-  FOREIGN KEY (fk_contrato, fk_numero_parcela) REFERENCES tb_parcela_mensalidade(fk_contrato, pk_numero_parcela),
+  -- LINHA CORRIGIDA ABAIXO (removido o pk_ de numero_parcela):
+  FOREIGN KEY (fk_contrato, fk_numero_parcela) REFERENCES tb_parcela_mensalidade(fk_contrato, numero_parcela),
   FOREIGN KEY (fk_rf_operador) REFERENCES tb_colaborador(pk_rf)
 );
 
@@ -713,7 +713,7 @@ CREATE TABLE tb_pagamento_despesa (
 CREATE VIEW vw_parcela_com_total AS
 SELECT
   fk_contrato,
-  pk_numero_parcela,
+  numero_parcela,
   competencia_mes,
   competencia_ano,
   valor_nominal,
@@ -778,8 +778,8 @@ GROUP BY m.fk_ra;
 CREATE VIEW vw_inadimplencia_resumo AS
 SELECT
   ci.fk_ra,
-  COUNT(p.pk_numero_parcela)                            AS total_parcelas_vencidas,
-  SUM(p.valor_nominal + p.valor_multa + p.valor_juros)  AS valor_total_em_aberto,
+  COUNT(p.numero_parcela) AS total_parcelas_vencidas,
+  SUM(p.valor_nominal + p.valor_multa + p.valor_juros) AS valor_total_em_aberto,
   ci.data_primeira_inadimplencia,
   ci.flag_bloqueio_academico
 FROM tb_controle_inadimplencia ci
@@ -1093,13 +1093,11 @@ SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome) AS nome,
   SUM(r.valor_recebido) AS total_pago
 FROM tb_estudante e
-JOIN tb_cadastro_pessoa pe     ON pe.pk_cpf = e.fk_cpf
-JOIN tb_cadastro_pessoa p      ON p.pk_cpf = e.fk_cpf
-JOIN tb_contrato_academico ca  ON ca.fk_ra = e.pk_ra
-JOIN tb_recebimento r          ON r.fk_contrato = ca.pk_contrato
-GROUP BY e.pk_ra, p.primeiro_nome, p.sobrenome
-HAVING SUM(r.valor_recebido) > 3000
-ORDER BY total_pago DESC;
+JOIN tb_cadastro_pessoa pe ON pe.pk_cpf = e.fk_cpf -- ESTA É A LINHA QUE VOCÊ DEVE APAGAR
+JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
+JOIN tb_contrato_academico ca ON ca.fk_ra = e.pk_ra
+JOIN tb_recebimento r ON r.fk_contrato = ca.pk_contrato
+GROUP BY p.primeiro_nome, p.sobrenome;
 
 SELECT
   d.nome_disciplina,
@@ -1346,8 +1344,8 @@ SELECT
   CONCAT(p.primeiro_nome, ' ', p.sobrenome),
   p.sexo,
   e.situacao,
-  pl.semestre,
-  pl.ano_letivo,
+  pl.pk_semestre,    -- Corrigido para pk_
+  pl.pk_ano_letivo,   -- Corrigido para pk_
   e.flag_risco_evasao
 FROM tb_estudante e
 JOIN tb_cadastro_pessoa p ON p.pk_cpf = e.fk_cpf
