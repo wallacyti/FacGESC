@@ -17,7 +17,9 @@ O banco de dados foi projetado para alimentar, na Fase 2, algoritmos de
 Inteligência Artificial capazes de prever risco de evasão, automatizar
 processos acadêmicos e gerar indicadores estratégicos para a gestão.
 
-<img width="6322" height="4461" alt="facGESC - Faculdade Particular" src="https://github.com/user-attachments/assets/a20ad84a-2fef-4d31-8a5e-65d79b808d45" />
+<img width="6322" height="4461" alt="facgesc_diagrama_er" src="https://github.com/user-attachments/assets/58e63024-670d-4c25-964e-d9f0f90f18f8" />
+
+https://dbdiagram.io/d/facgesc_diagrama_er-69d7fdbf0f7c9ef2c0be67c6
 
 ---
 ## Módulos do sistema
